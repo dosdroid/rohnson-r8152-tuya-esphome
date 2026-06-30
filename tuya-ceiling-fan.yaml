@@ -27,8 +27,11 @@ esphome:
 
 external_components:
   - source:
-      type: local
-      path: components
+      type: git
+      url: https://github.com/dosdroid/rohnson-r8152-tuya-esphome
+      ref: master
+    components: [tuya_cct_light]
+    refresh: 1d
 
 esp32:
   variant: esp32c3
