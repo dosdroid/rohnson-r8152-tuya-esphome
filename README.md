@@ -1,6 +1,6 @@
 # Rohnson R-8152 ceiling fan + light — ESPHome / Tuya-MCU bridge
 
-This is an [ESPHome](https://esphome.io/) configuration that replaces the
+This is an [ESPHome](https://esphome.io/) configuration that adds ESP into the place where should be the
 stock WiFi module of a **Rohnson R-8152** ceiling fan (with integrated CCT
 light) with a generic **ESP32-C3 Super Mini**, while still talking to the
 fan's original Tuya-protocol MCU over UART. The result is full local control
@@ -8,19 +8,25 @@ from Home Assistant — fan on/off, 6-speed, direction, light on/off,
 brightness, and 3-position color temperature — exposed as clean, native HA
 entities, with no cloud dependency.
 
+> This whole repo — the protocol reverse-engineering, the custom component,
+> and this README — was vibecoded with Claude Code. If you've got a Rohnson
+> R-8152 (or a board that looks like the one in the photos below) and find
+> anything else out about it — different datapoint behavior, a working
+> fix for the "All Off" limitation, anything — I'm happy to incorporate it
+> here. Open an issue or a PR.
+
 ## Hardware
 
 The Rohnson R-8152's main control board has an **unpopulated footprint**
 clearly intended for an OEM Tuya WiFi module — 5 pads (TX, RX, two GND, and
-one more) laid out in the usual Tuya module pattern — that the manufacturer
+3.3V) laid out in the usual Tuya module pattern — that the manufacturer
 left off this SKU. An ESP32-C3 Super Mini was wired directly into that
 footprint instead of the missing Tuya module.
 
 **The 3.3V rail on that footprint is dead** — there's no usable power pin
-among the 5 pads (two of the five are both GND, not a spare 3.3V; whatever
+among the 5 pads whatever
 pin was meant to supply 3.3V to the OEM module isn't actually powered on
-this board revision). So the ESP32-C3 is **powered externally** (its own USB
-input / a separate 3.3V/5V supply) rather than from the fan board, and only
+this board revision). So the ESP32-C3 is **powered externally** rather than from the fan board, and only
 TX/RX/GND are actually shared with the Tuya MCU footprint.
 
 Board identification, for anyone trying to match their own unit:
@@ -114,59 +120,6 @@ this onto a different set of datapoint IDs, the component takes
 `max_value` / `cold_white_color_temperature` / `warm_white_color_temperature`
 as plain YAML config — see its use in `tuya-ceiling-fan.yaml`.
 
-## The debugging journey (a.k.a. the shenanigans)
-
-None of this worked on the first try. In rough chronological order, here's
-what actually happened getting from "stock select dropdown that beeps
-angrily" to the current setup — useful context if you're reverse-engineering
-a different Tuya MCU and hit similar walls:
-
-1. **Symptom:** changing the color-temperature dropdown made the fixture
-   emit an angry error beep, and the RF remote's "All Off" button didn't
-   turn the light off in Home Assistant.
-2. **First instrumentation:** enabled `logger: level: VERY_VERBOSE` with a
-   `tuya:` component override, then OTA-flashed and live-tailed the
-   ESPHome API log stream while triggering both symptoms — this is the only
-   way to see raw UART frames; Home Assistant's own logs show nothing,
-   because this traffic never reaches HA, it's purely between the ESP32 and
-   the Tuya MCU.
-3. **Root cause #1 — the beep:** the original config used enum datapoint
-   values `0` (Cool), `64` (Neutral), `128` (Warm) for DP103. The capture
-   showed `Cool (0)` ACKing instantly and cleanly, but `Neutral (64)` and
-   `Warm (128)` got **zero response** from the MCU — ESPHome retried the SET
-   command 5 times, then gave up and logged `Initialization failed at
-   init_state 3`. The MCU was treating `64`/`128` as out-of-range enum
-   indices and silently refusing them (with an audible beep as the only
-   feedback). Fix: use small contiguous indices `0/1/2` instead — confirmed
-   by capture to ACK cleanly every time, in both directions, repeatedly.
-4. **Root cause #2 — "All Off":** captured the exact RF remote button press
-   for both the master "All Off" scene and the plain "Fan Off" button.
-   Byte-for-byte **identical** UART traffic came out of the MCU for both
-   (`DP1→OFF`, `DP101→0`, `DP102→0`) — yet physically, "All Off" also kills
-   the light and plain "Fan Off" doesn't. Confirmed via user observation on
-   the actual fixture. Conclusion: the MCU's "All Off" scene cuts the light
-   relay through an internal path that never gets reported as a datapoint
-   change, and there is no way to distinguish the two button presses from
-   the wire protocol alone — see "Known limitations" below.
-5. **The merged-entity rewrite:** with the protocol understood, replaced the
-   stock `light` + `select` pair with the custom `tuya_cct_light` component
-   described above, reusing the now-confirmed-correct `0/1/2` enum values
-   and the existing switch/dimmer datapoint wiring.
-6. **Root cause #3 — color direction reversed:** after flashing the merged
-   entity, the HA color-temp slider's "cool" end visually produced the
-   *warm* LEDs and vice versa. The component's mireds→enum mapping had
-   (reasonably, but wrongly) assumed raw enum `0` was the cold end and `2`
-   was the warm end, copying the direction convention from ESPHome's stock
-   `color_temperature_datapoint` handling. This particular MCU runs the
-   *opposite* direction. Fixed by inverting the mapping in both directions
-   (HA→MCU and MCU→HA) in `tuya_cct_light.cpp`, then re-verified with a full
-   slider sweep through all 3 positions in both directions.
-
-The throughline: **never assume a Tuya MCU's datapoint value range or
-semantics from the variable names/comments in an existing config.** Capture
-real traffic with `VERY_VERBOSE` logging and confirm what the MCU actually
-ACKs before trusting any value.
-
 ## Known limitations
 
 The remote's **"All Off" master scene button** turns the light off at the
@@ -179,39 +132,6 @@ to listen for here — this is a firmware limitation of the Tuya MCU itself,
 not something fixable in ESPHome config. The plain single-purpose "Light
 Off" and "Fan Off" remote buttons both work correctly and are unaffected;
 only the combined "All Off" scene is invisible to Home Assistant.
-
-## Setup
-
-1. Install [ESPHome](https://esphome.io/guides/installing_esphome) (a
-   Python venv is simplest: `python3 -m venv .venv && source .venv/bin/activate
-   && pip install esphome`).
-2. Copy `secrets.yaml.example` to `secrets.yaml` and fill in your own WiFi
-   credentials, API encryption key, and OTA/AP passwords.
-3. Flash for the first time over USB:
-   ```
-   esphome run tuya-ceiling-fan.yaml
-   ```
-   (select the USB serial port when prompted). After that, OTA updates work
-   from anywhere on the same network:
-   ```
-   esphome run tuya-ceiling-fan.yaml --device <device-ip-or-.local-name>
-   ```
-4. Add the device to Home Assistant via the ESPHome integration (it
-   auto-discovers via mDNS).
-
-## Debugging
-
-If you're adapting this for a different fan/board and need to see raw Tuya
-UART frames (including any error/NAK replies from the MCU), temporarily set:
-```yaml
-logger:
-  level: VERY_VERBOSE
-  logs:
-    tuya: VERY_VERBOSE
-```
-then watch live logs with `esphome logs tuya-ceiling-fan.yaml --device
-<ip>`. Revert to `level: INFO` afterwards — VERY_VERBOSE has a real
-performance cost and can cause API disconnects if left on permanently.
 
 ## Repo layout
 
