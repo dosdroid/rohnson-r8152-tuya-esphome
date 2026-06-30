@@ -71,6 +71,19 @@ void TuyaCctLight::write_state(light::LightState *state) {
   float color_temperature, brightness;
   state->current_values_as_ct(&color_temperature, &brightness);
 
+  // The dimmer datapoint has a hardware floor of min_value_ - below that the
+  // MCU doesn't actually dim any further. Snap HA's displayed brightness up
+  // to that floor too, so the UI doesn't show a value the hardware can't
+  // reach (and so it doesn't get stuck showing a too-low value if the
+  // clamped datapoint write below is skipped as "unchanged").
+  float min_brightness = float(this->min_value_) / float(this->max_value_);
+  if (brightness < min_brightness) {
+    brightness = min_brightness;
+    state->current_values.set_brightness(brightness);
+    state->remote_values.set_brightness(brightness);
+    state->publish_state();
+  }
+
   // color_temperature is 0.0 (cold/min_mireds) .. 1.0 (warm/max_mireds), but raw
   // 0/1/2 on this MCU runs warm->cool, so invert before snapping to the nearest step.
   uint8_t cct_value = static_cast<uint8_t>(std::min(2.0f, roundf((1.0f - color_temperature) * 2.0f)));
