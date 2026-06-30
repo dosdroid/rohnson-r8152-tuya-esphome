@@ -117,6 +117,16 @@ only has 3 real positions, it:
   brightness, on/off, or color temp, it converts the raw enum value back to
   a mireds value and pushes it into the *same* merged HA entity — remote and
   app stay in sync without needing a second entity.
+- **Brightness floor:** the dimmer datapoint has a real hardware floor at
+  `min_value` (10 on this fixture) — below that, the MCU doesn't dim any
+  further. If you drag HA's brightness slider below that floor, the
+  component clamps both the value sent to the MCU *and* the brightness HA
+  displays back up to the floor, in the same `write_state()` call. Without
+  this, the datapoint write below the floor gets silently skipped by the
+  Tuya component as "unchanged" (since the clamped value matches whatever
+  was already set), so no MCU echo ever arrives to correct the display —
+  HA would otherwise show whatever low value you dragged to, forever out of
+  sync with the light's actual (floored) brightness.
 
 If your fan/light only has 2 CCT positions instead of 3, or you want to wire
 this onto a different set of datapoint IDs, the component takes
