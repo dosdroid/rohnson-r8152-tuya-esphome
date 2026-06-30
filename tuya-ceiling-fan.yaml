@@ -1,0 +1,196 @@
+# Board: ESP32-C3 Super Mini (Generic)
+# Definition: definitions/boards/esp32-c3-supermini/manifest.yaml
+#
+# v6 - single-entity light + confirmed-good CCT protocol.
+#   Findings from live UART capture (see chat):
+#   - DP103 (color temp) is a real ENUM datapoint, but its legal raw values
+#     are 0/1/2 (Cool/Neutral/Warm), NOT 0/64/128. Sending 64/128 made the
+#     MCU silently reject the command (no ACK, 5 retries, "angry beep")
+#     and eventually log "Initialization failed". Fixed by using 0/1/2.
+#   - The remote's "All Off" scene turns the light off at the hardware
+#     level without ever reporting DP15 (or any light datapoint) over
+#     UART - confirmed identical wire traffic to the plain "Fan Off"
+#     button, which leaves the light on. This is a firmware limitation of
+#     the MCU itself; there is no datapoint to listen for, so HA cannot
+#     track that specific button. Plain Light Off / Fan Off both report
+#     correctly and are unaffected.
+#   - Light + CCT are now merged into ONE light entity (brightness +
+#     color_temp) via the local `tuya_cct_light` external component
+#     (./components/tuya_cct_light/), instead of a separate light +
+#     select. It sends the correct enum (0x04) frame type for DP103,
+#     snapping HA's continuous mireds slider to the nearest of the 3 real
+#     hardware steps.
+
+esphome:
+  name: tuya-ceiling-fan
+  friendly_name: Tuya Ceiling Fan
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+esp32:
+  variant: esp32c3
+  flash_size: 4MB
+  framework:
+    type: esp-idf
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: Tuya Ceiling Fan Fallback
+    password: !secret ap_fallback_password
+  enable_rrm: false
+  power_save_mode: NONE
+  output_power: 20dB
+
+captive_portal:
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+logger:
+  level: INFO
+  # Bump both the global level and the tuya: override to VERY_VERBOSE if you
+  # need to capture raw UART frames for debugging (see README "Debugging").
+  # Leaving this on permanently hurts performance and can cause API
+  # disconnects, so it's off by default here.
+
+uart:
+  rx_pin: GPIO20
+  tx_pin: GPIO21
+  baud_rate: 9600
+  id: tuya_uart
+
+time:
+  - platform: homeassistant
+    id: ha_time
+
+status_led:
+  pin:
+    number: GPIO8
+    inverted: true
+
+globals:
+  - id: suppress_fan_write
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: last_dp1
+    type: int
+    restore_value: no
+    initial_value: '-1'
+  - id: last_dp101
+    type: int
+    restore_value: no
+    initial_value: '-1'
+  - id: last_dp8
+    type: int
+    restore_value: no
+    initial_value: '-1'
+
+tuya:
+  id: tuya_mcu
+  uart_id: tuya_uart
+  time_id: ha_time
+  on_datapoint_update:
+    # ---------- FAN bridge (active) ----------
+    - sensor_datapoint: 1
+      datapoint_type: bool
+      then:
+        - lambda: |-
+            ESP_LOGD("bridge", "in  DP1  (fan switch) = %s", ONOFF(x));
+            id(last_dp1) = x ? 1 : 0;
+            id(suppress_fan_write) = true;
+            auto call = id(ceiling_fan)->make_call();
+            call.set_state(x);
+            if (x && id(last_dp101) >= 1 && id(last_dp101) <= 6)
+              call.set_speed(id(last_dp101));
+            call.perform();
+            id(suppress_fan_write) = false;
+
+    - sensor_datapoint: 101
+      datapoint_type: enum
+      then:
+        - lambda: |-
+            ESP_LOGD("bridge", "in  DP101(fan speed)  = %u", x);
+            if (x < 1 || x > 6) return;
+            id(last_dp101) = x;
+            if (!id(ceiling_fan)->state) return;
+            id(suppress_fan_write) = true;
+            auto call = id(ceiling_fan)->make_call();
+            call.set_speed(x);
+            call.perform();
+            id(suppress_fan_write) = false;
+
+    - sensor_datapoint: 8
+      datapoint_type: bool
+      then:
+        - lambda: |-
+            ESP_LOGD("bridge", "in  DP8  (fan dir)    = %s", x ? "REVERSE" : "FORWARD");
+            id(last_dp8) = x ? 1 : 0;
+            id(suppress_fan_write) = true;
+            auto call = id(ceiling_fan)->make_call();
+            call.set_direction(x ? fan::FanDirection::REVERSE : fan::FanDirection::FORWARD);
+            call.perform();
+            id(suppress_fan_write) = false;
+
+    # LIGHT / CCT (DP15, DP16, DP103) are handled directly by the
+    # tuya_cct_light component below via its own listeners.
+
+fan:
+  - platform: template
+    id: ceiling_fan
+    name: "Ceiling Fan"
+    has_direction: true
+    speed_count: 6
+    on_state:
+      - lambda: |-
+          if (id(suppress_fan_write)) return;
+          auto *t = id(tuya_mcu);
+          int s = id(ceiling_fan)->state ? 1 : 0;
+          if (s != id(last_dp1)) {
+            t->set_boolean_datapoint_value(1, id(ceiling_fan)->state);
+            id(last_dp1) = s;
+          }
+          if (id(ceiling_fan)->state) {
+            int sp = id(ceiling_fan)->speed;
+            if (sp >= 1 && sp <= 6 && sp != id(last_dp101)) {
+              t->set_enum_datapoint_value(101, (uint8_t) sp);
+              id(last_dp101) = sp;
+            }
+          }
+          int d = (id(ceiling_fan)->direction == fan::FanDirection::REVERSE) ? 1 : 0;
+          if (d != id(last_dp8)) {
+            t->set_boolean_datapoint_value(8, d == 1);
+            id(last_dp8) = d;
+          }
+
+# Single HA light entity: brightness (DP16) + on/off (DP15) + 3-step
+# color temperature (DP103 enum, raw 0/1/2). See components/tuya_cct_light/.
+light:
+  - platform: "tuya_cct_light"
+    name: "Ceiling Light"
+    tuya_id: tuya_mcu
+    switch_datapoint: 15
+    dimmer_datapoint: 16
+    cct_datapoint: 103
+    min_value: 10
+    max_value: 100
+    cold_white_color_temperature: 153 mireds
+    warm_white_color_temperature: 370 mireds
+
+number:
+  - platform: "tuya"
+    name: "Fan Timer (hours)"
+    number_datapoint: 102
+    min_value: 0
+    max_value: 8
+    step: 1
