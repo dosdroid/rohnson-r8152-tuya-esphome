@@ -48,6 +48,9 @@ Board identification, for anyone trying to match their own unit:
 | ![Driver board at angle](hardware/driver-board-angle.jpg) Board angle showing transformer and heatsinks | ![Driver board MCU area](hardware/driver-board-mcu-area.jpg) MCU/control area — buzzer, crystal `6.7458`, yellow UART wire to the ESP32 |
 | ![Driver board MCU area magnified](hardware/driver-board-mcu-area-magnified.jpg) Same area, magnified | ![LED driver IC closeup](hardware/led-driver-ic-closeup.jpg) LED driver IC closeup: On-Bright `OB38R08A1W16OP` |
 
+![Tuya module footprint pinout, annotated](hardware/tuya-footprint-pinout.png)
+*The 5-pad footprint, annotated: GND (×2), RX, TX, and the dead 3.3V pad.*
+
 Wiring used in this build (adjust to match your board's silkscreen/pad
 labels — don't assume yours match without checking, and confirm with a
 multimeter whether your board's "3.3V" pad is actually live before relying
