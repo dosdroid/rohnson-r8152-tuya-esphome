@@ -45,7 +45,7 @@ Board identification, for anyone trying to match their own unit:
 |---|---|
 | ![Enclosure back label](hardware/enclosure-back-label.jpg) Enclosure back label: `12606AB` / `01-2026` | ![Enclosure side label](hardware/enclosure-side-label.jpg) Enclosure side label: `52-13213` |
 | ![Driver board overview](hardware/driver-board-overview.jpg) Full driver board, top side | ![Driver board power section](hardware/driver-board-power-section.jpg) Power section: bridge rectifier, main filter cap, inductors |
-| ![Driver board at angle](hardware/driver-board-angle.jpg) Board angle showing transformer and heatsinks | ![Driver board MCU area](hardware/driver-board-mcu-area.jpg) MCU/control area — buzzer, crystal `6.7458`, yellow UART wire to the ESP32 |
+| ![Driver board at angle](hardware/driver-board-angle.jpg) Board angle showing transformer and heatsinks | ![Driver board MCU area](hardware/driver-board-mcu-area.jpg) MCU/control area — buzzer, crystal `6.7458`, yellow RF antenna |
 | ![Driver board MCU area magnified](hardware/driver-board-mcu-area-magnified.jpg) Same area, magnified | ![LED driver IC closeup](hardware/led-driver-ic-closeup.jpg) LED driver IC closeup: On-Bright `OB38R08A1W16OP` |
 
 
