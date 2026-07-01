@@ -12,7 +12,7 @@ entities, with no cloud dependency.
 > and this README — was vibecoded with Claude Code. If you've got a Rohnson
 > R-8152 (or a board that looks like the one in the photos below) and find
 > anything else out about it — different datapoint behavior, a working
-> fix for the "All Off" limitation,a way how to disable the peizo buzzer, anything — I'm happy to incorporate it
+> fix for the "All Off" limitation, a way how to disable the peizo buzzer, anything — I'm happy to incorporate it
 > here. Open an issue or a PR.
 
 ## Hardware
