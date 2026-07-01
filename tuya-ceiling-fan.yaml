@@ -134,14 +134,14 @@ tuya:
             id(suppress_fan_write) = false;
 
     - sensor_datapoint: 8
-      datapoint_type: bool
+      datapoint_type: enum
       then:
         - lambda: |-
-            ESP_LOGD("bridge", "in  DP8  (fan dir)    = %s", x ? "REVERSE" : "FORWARD");
-            id(last_dp8) = x ? 1 : 0;
+            ESP_LOGD("bridge", "in  DP8  (fan dir)    = %u", x);
+            id(last_dp8) = x;
             id(suppress_fan_write) = true;
             auto call = id(ceiling_fan)->make_call();
-            call.set_direction(x ? fan::FanDirection::REVERSE : fan::FanDirection::FORWARD);
+            call.set_direction(x == 1 ? fan::FanDirection::REVERSE : fan::FanDirection::FORWARD);
             call.perform();
             id(suppress_fan_write) = false;
 
@@ -172,7 +172,7 @@ fan:
           }
           int d = (id(ceiling_fan)->direction == fan::FanDirection::REVERSE) ? 1 : 0;
           if (d != id(last_dp8)) {
-            t->set_boolean_datapoint_value(8, d == 1);
+            t->set_enum_datapoint_value(8, (uint8_t) d);
             id(last_dp8) = d;
           }
 
