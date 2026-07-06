@@ -117,6 +117,16 @@ only has 3 real positions, it:
   brightness, on/off, or color temp, it converts the raw enum value back to
   a mireds value and pushes it into the *same* merged HA entity — remote and
   app stay in sync without needing a second entity.
+- **Flood protection:** the MCU can't absorb rapid-fire commands — each
+  rejected frame means 5 retries and an angry beep. Hold-to-dim controllers
+  (e.g. ControllerX with an IKEA remote) send `light.turn_on` with a
+  transition several times per second, and ESPHome renders each transition
+  as many intermediate brightness writes. The component therefore skips
+  datapoint writes while a transition is in flight (only the final target
+  value is sent), never retransmits a raw value that hasn't changed, and
+  ignores incoming datapoint updates for 1 s after its own writes — those
+  are just the MCU echoing the write back, and pushing a stale echo into
+  the light state mid-dim would make brightness bounce back and forth.
 - **Brightness floor:** the dimmer datapoint has a real hardware floor at
   `min_value` (10 on this fixture) — below that, the MCU doesn't dim any
   further. If you drag HA's brightness slider below that floor, the

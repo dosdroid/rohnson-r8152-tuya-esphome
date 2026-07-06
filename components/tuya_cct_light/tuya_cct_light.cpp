@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 #include "tuya_cct_light.h"
 
@@ -9,8 +10,23 @@ namespace tuya_cct_light {
 
 static const char *const TAG = "tuya_cct_light";
 
+// How long after one of our own writes an incoming datapoint update is
+// treated as an echo of that write rather than a real remote-driven change.
+static const uint32_t ECHO_COOLDOWN_MS = 1000;
+
+bool TuyaCctLight::in_echo_cooldown_() const {
+  return this->last_write_ms_ != 0 && (millis() - this->last_write_ms_) < ECHO_COOLDOWN_MS;
+}
+
 void TuyaCctLight::setup() {
   this->parent_->register_listener(this->switch_id_, [this](const tuya::TuyaDatapoint &datapoint) {
+    // The MCU report is the ground truth for what was actually applied -
+    // resync the dedupe cache even when the state update below is skipped.
+    this->last_sent_switch_ = datapoint.value_bool ? 1 : 0;
+    if (this->in_echo_cooldown_()) {
+      ESP_LOGD(TAG, "Ignoring switch datapoint echo of our own write");
+      return;
+    }
     if (this->state_->current_values != this->state_->remote_values) {
       ESP_LOGD(TAG, "Light is transitioning, switch datapoint change ignored");
       return;
@@ -21,6 +37,11 @@ void TuyaCctLight::setup() {
   });
 
   this->parent_->register_listener(this->dimmer_id_, [this](const tuya::TuyaDatapoint &datapoint) {
+    this->last_sent_brightness_ = int(datapoint.value_uint);
+    if (this->in_echo_cooldown_()) {
+      ESP_LOGD(TAG, "Ignoring dimmer datapoint echo of our own write");
+      return;
+    }
     if (this->state_->current_values != this->state_->remote_values) {
       ESP_LOGD(TAG, "Light is transitioning, dimmer datapoint change ignored");
       return;
@@ -31,6 +52,11 @@ void TuyaCctLight::setup() {
   });
 
   this->parent_->register_listener(this->cct_id_, [this](const tuya::TuyaDatapoint &datapoint) {
+    this->last_sent_cct_ = int(datapoint.value_enum);
+    if (this->in_echo_cooldown_()) {
+      ESP_LOGD(TAG, "Ignoring cct datapoint echo of our own write");
+      return;
+    }
     if (this->state_->current_values != this->state_->remote_values) {
       ESP_LOGD(TAG, "Light is transitioning, cct datapoint change ignored");
       return;
@@ -63,8 +89,22 @@ light::LightTraits TuyaCctLight::get_traits() {
 void TuyaCctLight::setup_state(light::LightState *state) { this->state_ = state; }
 
 void TuyaCctLight::write_state(light::LightState *state) {
+  // During a transition (e.g. ControllerX hold-to-dim sends turn_on with a
+  // transition time) ESPHome calls write_state on every loop tick with
+  // intermediate values. The Tuya MCU can't absorb frames at that rate - it
+  // rejects them (5 retries + beep each). Skip the intermediate frames; when
+  // the transformer finishes, LightState clears the flag and calls
+  // write_state once more with the final target values, so the end state
+  // always gets sent.
+  if (state->is_transformer_active())
+    return;
+
   if (!state->current_values.is_on()) {
-    this->parent_->set_boolean_datapoint_value(this->switch_id_, false);
+    if (this->last_sent_switch_ != 0) {
+      this->parent_->set_boolean_datapoint_value(this->switch_id_, false);
+      this->last_sent_switch_ = 0;
+      this->last_write_ms_ = millis();
+    }
     return;
   }
 
@@ -87,13 +127,25 @@ void TuyaCctLight::write_state(light::LightState *state) {
   // color_temperature is 0.0 (cold/min_mireds) .. 1.0 (warm/max_mireds), but raw
   // 0/1/2 on this MCU runs warm->cool, so invert before snapping to the nearest step.
   uint8_t cct_value = static_cast<uint8_t>(std::min(2.0f, roundf((1.0f - color_temperature) * 2.0f)));
-  this->parent_->set_enum_datapoint_value(this->cct_id_, cct_value);
+  if (int(cct_value) != this->last_sent_cct_) {
+    this->parent_->set_enum_datapoint_value(this->cct_id_, cct_value);
+    this->last_sent_cct_ = int(cct_value);
+    this->last_write_ms_ = millis();
+  }
 
   auto brightness_int = static_cast<uint32_t>(brightness * this->max_value_);
   brightness_int = std::max(brightness_int, this->min_value_);
-  this->parent_->set_integer_datapoint_value(this->dimmer_id_, brightness_int);
+  if (int(brightness_int) != this->last_sent_brightness_) {
+    this->parent_->set_integer_datapoint_value(this->dimmer_id_, brightness_int);
+    this->last_sent_brightness_ = int(brightness_int);
+    this->last_write_ms_ = millis();
+  }
 
-  this->parent_->set_boolean_datapoint_value(this->switch_id_, true);
+  if (this->last_sent_switch_ != 1) {
+    this->parent_->set_boolean_datapoint_value(this->switch_id_, true);
+    this->last_sent_switch_ = 1;
+    this->last_write_ms_ = millis();
+  }
 }
 
 }  // namespace tuya_cct_light

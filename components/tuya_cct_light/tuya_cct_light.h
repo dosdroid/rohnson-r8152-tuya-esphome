@@ -34,6 +34,19 @@ class TuyaCctLight : public Component, public light::LightOutput {
   void write_state(light::LightState *state) override;
 
  protected:
+  // True while we recently wrote to the MCU - incoming datapoint updates in
+  // this window are just echoes of our own writes and must not be pushed
+  // back into the light state (a stale echo would fight rapid dimming from
+  // e.g. ControllerX remotes, making brightness bounce back and forth).
+  bool in_echo_cooldown_() const;
+
+  uint32_t last_write_ms_{0};
+  // Last raw values actually sent to the MCU, so unchanged values are never
+  // retransmitted (each redundant frame is a chance for the MCU to beep).
+  int last_sent_switch_{-1};
+  int last_sent_brightness_{-1};
+  int last_sent_cct_{-1};
+
   tuya::Tuya *parent_{nullptr};
   uint8_t switch_id_{0};
   uint8_t dimmer_id_{0};
