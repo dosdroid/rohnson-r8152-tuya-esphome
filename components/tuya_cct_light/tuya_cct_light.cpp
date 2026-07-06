@@ -14,6 +14,12 @@ static const char *const TAG = "tuya_cct_light";
 // treated as an echo of that write rather than a real remote-driven change.
 static const uint32_t ECHO_COOLDOWN_MS = 1000;
 
+// Minimum spacing between datapoint writes while a transition is running.
+// ~3 writes/s keeps hold-to-dim ramps visually smooth (the LED driver slews
+// between values anyway) while staying far below the rate that makes the
+// MCU start rejecting frames.
+static const uint32_t TRANSITION_WRITE_INTERVAL_MS = 300;
+
 bool TuyaCctLight::in_echo_cooldown_() const {
   return this->last_write_ms_ != 0 && (millis() - this->last_write_ms_) < ECHO_COOLDOWN_MS;
 }
@@ -92,11 +98,12 @@ void TuyaCctLight::write_state(light::LightState *state) {
   // During a transition (e.g. ControllerX hold-to-dim sends turn_on with a
   // transition time) ESPHome calls write_state on every loop tick with
   // intermediate values. The Tuya MCU can't absorb frames at that rate - it
-  // rejects them (5 retries + beep each). Skip the intermediate frames; when
-  // the transformer finishes, LightState clears the flag and calls
+  // rejects them (5 retries + beep each). Throttle intermediate frames to
+  // one per TRANSITION_WRITE_INTERVAL_MS so the ramp still looks smooth;
+  // when the transformer finishes, LightState clears the flag and calls
   // write_state once more with the final target values, so the end state
-  // always gets sent.
-  if (state->is_transformer_active())
+  // always gets sent regardless of the throttle.
+  if (state->is_transformer_active() && (millis() - this->last_write_ms_) < TRANSITION_WRITE_INTERVAL_MS)
     return;
 
   if (!state->current_values.is_on()) {
