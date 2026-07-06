@@ -15,10 +15,10 @@ static const char *const TAG = "tuya_cct_light";
 static const uint32_t ECHO_COOLDOWN_MS = 1000;
 
 // Minimum spacing between datapoint writes while a transition is running.
-// ~3 writes/s keeps hold-to-dim ramps visually smooth (the LED driver slews
-// between values anyway) while staying far below the rate that makes the
-// MCU start rejecting frames.
-static const uint32_t TRANSITION_WRITE_INTERVAL_MS = 300;
+// ~6-7 writes/s keeps hold-to-dim ramps visually smooth while staying below
+// the rate that makes the MCU start rejecting frames (the beeping came from
+// unthrottled transitions producing dozens of frames per second).
+static const uint32_t TRANSITION_WRITE_INTERVAL_MS = 150;
 
 bool TuyaCctLight::in_echo_cooldown_() const {
   return this->last_write_ms_ != 0 && (millis() - this->last_write_ms_) < ECHO_COOLDOWN_MS;
